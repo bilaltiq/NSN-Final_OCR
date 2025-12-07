@@ -30,8 +30,8 @@ def add_shadow (img):
     return img_shadow.convert("RGB")
 
 def modify():
-    ds = CampbellDataset("NSN-Final_OCR/Dataset/GT-pairs")
-    output_dir = "NSN-Final_OCR/Dataset/ShadowedGT-Pairs"
+    ds = CampbellDataset("Dataset/GT-pairs")
+    output_dir = "Dataset/ShadowedGT-Pairs"
 
     os.makedirs(output_dir, exist_ok = True)
 
