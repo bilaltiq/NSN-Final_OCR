@@ -1,10 +1,11 @@
 from cb_dataloader import CampbellDataset
+from torch.utils.data import DataLoader
 
-ds = CampbellDataset("Dataset/GT-pairs")
+dataset = CampbellDataset("Dataset/GT-pairs")
 
-print("Total samples:", len(ds))
-
-img_path, gt = ds[0]
-
-print("Image:", img_path)
-print("GT text:", gt)
+loader = DataLoader(
+    dataset,
+    batch_size = 1,
+    shuffle = False,
+    num_workers = 0
+)
