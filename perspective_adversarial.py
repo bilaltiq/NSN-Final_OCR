@@ -14,8 +14,8 @@ def add_perspective_shift (img):
     
 
 def modify():
-    ds = CampbellDataset("NSN-Final_OCR/Dataset/GT-pairs")
-    output_dir = "NSN-Final_OCR/Dataset/PerspectiveGT-Pairs"
+    ds = CampbellDataset("Dataset/GT-pairs")
+    output_dir = "Dataset/PerspectiveGT-Pairs"
 
     os.makedirs(output_dir, exist_ok = True)
 
