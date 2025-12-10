@@ -1,49 +1,86 @@
-import os
-import numpy as np
+import torch
+from transformers import AutoProcessor, AutoModelForCausalLM
 from cb_dataloader import CampbellDataset
+from torch.utils.data import DataLoader
 from metrics import cer, wer
-from paddleocr import PaddleOCR
 
-print("baseline test - paddleocr")
+# -----------------------------
+# Custom collate so PIL images pass through
+# -----------------------------
+def collate_nopad(batch):
+    return batch[0]   # batch_size = 1, simplest fix
 
-ocr = PaddleOCR(lang='en')
-dataset = CampbellDataset("Dataset/GT-pairs", transform=None)
-total_samples = len(dataset)
+# -----------------------------
+# Dataset + Loader
+# -----------------------------
+dataset = CampbellDataset("Dataset/GT-pairs")
+loader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=collate_nopad)
 
-print("\n starting")
+print("Total samples:", len(dataset))
 
+# -----------------------------
+# Model + Processor
+# -----------------------------
+model_name = "microsoft/Florence-2-base"
+
+processor = AutoProcessor.from_pretrained(model_name)
+
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    dtype=torch.float16,      # <- fix the deprecation + ensures half precision
+    device_map="auto"
+)
+
+# Force slower but safe attention on Windows
+model.config._attn_implementation = "eager"
+
+# -----------------------------
+# Evaluation
+# -----------------------------
 total_cer = 0
 total_wer = 0
+count = 0
 
-for i in range(total_samples):
-    sample = dataset[i]
+for sample in loader:
+    img = sample["image"]
+    gt_text = sample["text"]
+    sample_id = sample["id"]
 
-    img_array = np.array(sample['image'])
+    # Florence task prompt
+    prompt = "<OCR>"
 
-    result = ocr.ocr(img_array)
+    # Processor returns pixel_values float32 → cast later to float16
+    inputs = processor(
+        text=prompt,
+        images=img,
+        return_tensors="pt"
+    )
 
-    predicted = ""
-    if result and result[0]:
-        texts = []
-        for line in result[0]:
-            if len(line) >= 2:
-                text = line[1][0] if isinstance(line[1], tuple) else str(line[1])
-                texts.append(text)
-        predicted = ' '.join(texts)
+    # -----------------------------
+    # IMPORTANT FIX:
+    # Florence vision encoder requires pixel_values = float16
+    # -----------------------------
+    inputs = {k: v.to(model.device, dtype=torch.float16) for k, v in inputs.items()}
 
-    gt = sample['text']
-    current_cer = cer(gt, predicted)
-    current_wer = wer(gt, predicted)
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=512,
+        do_sample=False
+    )
 
+    pred = processor.batch_decode(outputs, skip_special_tokens=True)[0].strip()
 
-    total_cer += current_cer
-    total_wer += current_wer
+    c = cer(gt_text, pred)
+    w = wer(gt_text, pred)
+    total_cer += c
+    total_wer += w
+    count += 1
 
+    print(f"[{sample_id}] CER: {c:.3f} | WER: {w:.3f}")
+    print(" GT :", gt_text)
+    print(" OCR:", pred)
+    print("-" * 60)
 
-    if (i + 1) % 10 == 0:
-        print(f"Progress: processed {i+1}/{total_samples} samples")
-
-print("\n results:")
-print(f"Total samples: {total_samples}")
-print(f"Average CER: {total_cer/total_samples:.4f}")
-print(f"Average WER: {total_wer/total_samples:.4f}")
+print("\n | FINAL METRICS | ")
+print("Average CER:", total_cer / count)
+print("Average WER:", total_wer / count)

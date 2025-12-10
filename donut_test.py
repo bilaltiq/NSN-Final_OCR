@@ -1,8 +1,9 @@
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoProcessor, AutoModelForImageTextToText
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 from cb_dataloader import CampbellDataset
 from metrics import cer, wer
+from PIL import Image
 
 # ===========================
 # Dataset
@@ -17,16 +18,14 @@ print("Total samples:", len(dataset))
 # Model
 # ===========================
 
-model_name = "Qwen/Qwen2-VL-7B-Instruct"
+model_name = "microsoft/trocr-base-stage1"  # lightweight TrOCR model
+processor = TrOCRProcessor.from_pretrained(model_name)
+model = VisionEncoderDecoderModel.from_pretrained(model_name)
 
-processor = AutoProcessor.from_pretrained(model_name)
-model = AutoModelForImageTextToText.from_pretrained(
-    model_name,
-    torch_dtype=torch.float16,
-    device_map="auto"
-)
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device)
+model.eval()
 
-device = model.device
 print("Model loaded on device:", device)
 
 # ===========================
@@ -39,27 +38,15 @@ count = 0
 
 for batch in loader:
     img = batch["image"]         # PIL Image
-    gt_text = batch["text"]      # Ground truth text
-    sample_id = batch["id"]      # Sample ID
+    gt_text = batch["text"]      # Ground truth
+    sample_id = batch["id"]
 
-    # Text prompt with image placeholder
-    text_prompt = "<img></img> Please transcribe all text in this image exactly as written."
+    # Process image
+    pixel_values = processor(images=img, return_tensors="pt").pixel_values.to(device)
 
-    # Processor expects list of images
-    inputs = processor(
-        images=[img],           # must be a list
-        text=text_prompt,
-        return_tensors="pt"
-    ).to(device)
-
-    # Generate OCR predictions
-    output_ids = model.generate(
-        **inputs,
-        max_new_tokens=512
-    )
-
-    # Decode text
-    pred_text = processor.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+    # Generate predictions
+    generated_ids = model.generate(pixel_values, max_length=512)
+    pred_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
 
     # Compute metrics
     sample_cer = cer(gt_text, pred_text)
@@ -69,7 +56,6 @@ for batch in loader:
     total_wer += sample_wer
     count += 1
 
-    # Print per-sample results
     print(f"[{sample_id}] CER: {sample_cer:.3f} | WER: {sample_wer:.3f}")
     print(" GT :", gt_text)
     print(" OCR:", pred_text)
