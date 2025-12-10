@@ -1,84 +1,19 @@
-import torch
-from torch.utils.data import DataLoader
-from transformers import AutoProcessor, AutoModelForImageTextToText
-from cb_dataloader import CampbellDataset
-from metrics import cer, wer
+from accuracy import test_accuracy
 
-# ===========================
-# Dataset
-# ===========================
+def main():
+    Epsilon = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 0.75, 1]
+    dataset = "./Dataset/GT-pairs"
+    output = "./Dataset/Outputs"
+    
+    # These to metrics are specifically for paged gradient descent
+    step_size = 0.025
+    iters = 10
 
-dataset = CampbellDataset("Dataset/GT-pairs")
-loader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=lambda x: x[0])
+    # Run tests
+    for epsilon in Epsilon: 
+        test_accuracy(dataset, output, epsilon, step_size, iters)
 
-print("Total samples:", len(dataset))
+    print("Experiment Complete for PP_OCRv5 English\n")
 
-# ===========================
-# Model
-# ===========================
-
-model_name = "Qwen/Qwen2-VL-7B-Instruct"
-
-processor = AutoProcessor.from_pretrained(model_name)
-model = AutoModelForImageTextToText.from_pretrained(
-    model_name,
-    torch_dtype=torch.float16,
-    device_map="auto"
-)
-
-device = model.device
-print("Model loaded on device:", device)
-
-# ===========================
-# Evaluation Loop
-# ===========================
-
-total_cer = 0
-total_wer = 0
-count = 0
-
-for batch in loader:
-    img = batch["image"]         # PIL Image
-    gt_text = batch["text"]      # Ground truth text
-    sample_id = batch["id"]      # Sample ID
-
-    # Text prompt with image placeholder
-    text_prompt = "<img></img> Please transcribe all text in this image exactly as written."
-
-    # Processor expects list of images
-    inputs = processor(
-        images=[img],           # must be a list
-        text=text_prompt,
-        return_tensors="pt"
-    ).to(device)
-
-    # Generate OCR predictions
-    output_ids = model.generate(
-        **inputs,
-        max_new_tokens=512
-    )
-
-    # Decode text
-    pred_text = processor.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
-
-    # Compute metrics
-    sample_cer = cer(gt_text, pred_text)
-    sample_wer = wer(gt_text, pred_text)
-
-    total_cer += sample_cer
-    total_wer += sample_wer
-    count += 1
-
-    # Print per-sample results
-    print(f"[{sample_id}] CER: {sample_cer:.3f} | WER: {sample_wer:.3f}")
-    print(" GT :", gt_text)
-    print(" OCR:", pred_text)
-    print("-" * 60)
-
-# ===========================
-# Final Metrics
-# ===========================
-
-print("\n| FINAL METRICS |")
-print("Average CER:", total_cer / count)
-print("Average WER:", total_wer / count)
+if __name__ == "__main__":
+    main()
